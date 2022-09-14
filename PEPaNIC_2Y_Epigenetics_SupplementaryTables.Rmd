@@ -1,0 +1,289 @@
+---
+title: "PEPaNIC Epigenetic Follow-up: Supplementary tables 1-5"
+output: html_notebook
+---
+```{r include=FALSE}
+library(tidyverse)
+library(openxlsx)
+library(knitr)
+library(kableExtra)
+```
+
+```{r include=FALSE}
+# DMP results
+load("../../temp_saves/DMPResults/DMP_PtCtrl.Rdata")
+
+# DMR results
+load("../../output/DMRResults/DMR_PtCtrl.Rdata")
+
+# CpG DMP and DMR info
+load(file="../../temp_saves/HierarchicalFunctionalAnnotation.Rdata")
+rm(KeggGenes2Hierarchy)
+
+UCSC_ID2Name <- data.frame(
+  UCSC_RefGene_Accession = data.frame(IlluminaHumanMethylationEPICanno.ilm10b4.hg19::Other)$UCSC_RefGene_Accession %>% str_split(";") %>% unlist(),
+  UCSC_RefGene_Name = data.frame(IlluminaHumanMethylationEPICanno.ilm10b4.hg19::Other)$UCSC_RefGene_Name %>% str_split(";") %>% unlist()
+) %>% distinct()
+
+load(file="../../output/PathwayResults/HierarchicalFunctionalAnnotation_stats.Rdata")
+KEGG_pathways_annotated <- read.xlsx("../../metadata/KEGG/KEGGPathwayAnnotation_Categorisation-Final.xlsx")
+
+```
+
+
+
+# Supplementary Table 1
+
+
+```{r}
+SupplTable1 <- CpG_DMP %>%
+  select(CpG, UCSC_RefGene_Accession, UCSC_RefGene_Group, Hypomethylated_Patient, adj.P.Val) %>%
+  left_join(UCSC_ID2Name,
+            by=c("UCSC_RefGene_Accession"))%>% 
+  left_join(data.frame(IlluminaHumanMethylationEPICanno.ilm10b4.hg19::Other) %>%
+              rownames_to_column("CpG") %>%
+              select(CpG, Regulatory_Feature_Group), by="CpG") %>%
+  mutate(more_methylated_in = case_when(Hypomethylated_Patient ~ "Healthy children", TRUE ~ "Former patients"),
+         UCSC_RefGene_Group = case_when(UCSC_RefGene_Group %in% c("TSS1500", "TSS200")~"Promoter",
+                                              UCSC_RefGene_Group %in% c("5'UTR")~"5'UTR",
+                                              UCSC_RefGene_Group %in% c("1stExon")~"1st Exon",
+                                              UCSC_RefGene_Group %in% c("3'UTR")~"3'UTR",
+                                              UCSC_RefGene_Group %in% c("Body", "ExonBnd")~"Body",
+                                              TRUE ~ "Intergenic"),
+         adjusted_P_Value = formatC(adj.P.Val, format = "e", digits = 3)) %>%
+  select(CpG, `Gene symbol`=UCSC_RefGene_Name, `Gene section`=UCSC_RefGene_Group, `More methylated in`=more_methylated_in, `Adjusted p-value` = adjusted_P_Value, adj.P.Val) %>%
+  mutate(inGene = ifelse(`Gene symbol`=="",1,0)) %>%
+  arrange(inGene, `Gene symbol`, CpG, adj.P.Val) %>%
+  select(-inGene, -adj.P.Val)
+
+SupplTable1 %>%
+  kbl() %>%
+  kable_styling()
+
+SupplTable1 %>% 
+  write.xlsx("../../output/DMPResults/Supplementary_table_S1_DMP.xlsx")
+
+```
+
+
+# Supplementary Table 2
+
+```{r}
+CpG_DMP_TidyLocation <- CpG_DMP %>% select(CpG, UCSC_RefGene_Group, t) %>% distinct() %>%
+  mutate(CpGLocation_L2 = case_when(UCSC_RefGene_Group %in% c("TSS1500", "TSS200")~"Promoter",
+                                              UCSC_RefGene_Group %in% c("5'UTR")~"5'UTR",
+                                              UCSC_RefGene_Group %in% c("1stExon")~"1st Exon",
+                                              UCSC_RefGene_Group %in% c("3'UTR")~"3'UTR",
+                                              UCSC_RefGene_Group %in% c("Body", "ExonBnd")~"Body",
+                                              TRUE ~ NA_character_),
+         CpGLocation_L1 = ifelse(is.na(CpGLocation_L2), "Intergenic", "Within a gene"),
+         CpGLocation_L0 = "All locations",
+         HypomethylatedInPatients = ifelse(sign(t)<0, TRUE, FALSE)) %>%
+  gather("depth", "location", 4:6) %>%
+  filter(!is.na(location)) %>%
+  mutate(location=factor(location, levels = c("All locations", "Intergenic","Within a gene", "Promoter", "5'UTR", "1st Exon", "Body", "3'UTR")))
+
+NumberOf_TotalCpG <- CpG_DMP_TidyLocation %>% select(CpG, location) %>% distinct() %>% filter(location=="All locations") %>% nrow()
+NumberOf_CpGInGene <- CpG_DMP_TidyLocation %>% select(CpG, location) %>% distinct() %>% filter(location=="Within a gene") %>% nrow()
+
+CpG_DMP_SummaryLocation <- CpG_DMP_TidyLocation %>% select(CpG, location) %>% distinct() %>%
+  filter(location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+  dplyr::count(location, name = "N_DMPs_All") %>%
+  mutate(Denominator = NumberOf_TotalCpG,
+         P_DMPs_ALL = round(N_DMPs_All/Denominator*100,1)) %>%
+  bind_rows(CpG_DMP_TidyLocation %>% select(CpG, location) %>% distinct() %>%
+              filter(!location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+              dplyr::count(location, name = "N_DMPs_All") %>%
+              mutate(Denominator = NumberOf_CpGInGene,
+                     P_DMPs_ALL = round(N_DMPs_All/Denominator*100,1))) %>%
+  left_join(CpG_DMP_TidyLocation %>% select(CpG, location, HypomethylatedInPatients) %>% distinct() %>%
+              filter(HypomethylatedInPatients) %>%
+              dplyr::count(location, name = "N_DMPs_HypoPt"), by="location" ) %>%
+  mutate(Denominator_HypoPt = N_DMPs_All,
+         P_DMPs_HypoPt = round(N_DMPs_HypoPt/N_DMPs_All*100,1))
+
+CpG_DMP_SummaryLocation_Formatted <- CpG_DMP_SummaryLocation %>%
+  transmute(`Location within the genome` = location,
+         `Number (%) of DMPs` = paste0(N_DMPs_All, "/", Denominator, " (", P_DMPs_ALL, "%)"),
+         `Number (%) of DMPs hypomethylated in former patients` = paste0(N_DMPs_HypoPt, "/", Denominator_HypoPt, " (", P_DMPs_HypoPt, "%)"))
+
+
+CpG_DMP_SummaryLocation_Formatted <- bind_rows(CpG_DMP_SummaryLocation_Formatted %>%
+            filter(`Location within the genome` %in% c("All locations", "Intergenic", "Within a gene")),
+          CpG_DMP_SummaryLocation_Formatted %>%
+            filter(!`Location within the genome` %in% c("All locations", "Intergenic", "Within a gene")) %>%
+            dplyr::rename(`Number (%) of DMPs within a gene section`=`Number (%) of DMPs`)
+          ) %>% 
+  select(`Location within the genome`, `Number (%) of DMPs`, `Number (%) of DMPs within a gene section`, `Number (%) of DMPs hypomethylated in former patients`)
+
+CpG_DMP_SummaryLocation_Formatted
+CpG_DMP_SummaryLocation_Formatted %>% kbl() %>% kable_styling()
+CpG_DMP_SummaryLocation_Formatted %>% write.xlsx("../../output/DMPResults/Supplementary_table_S2_DMP_GeneLocations.xlsx")
+```
+
+# Supplementary table 3
+
+```{r}
+SupplTable3 <- CpG_DMR %>% select(DMR, seqnames, start, end, width, no.cpgs) %>% distinct() %>%
+  select(DMR, Chromosome=seqnames, `Start DMR` = start, `End DMR` = end, `Width DMR` = width, `Number of CpGs in DMR` = no.cpgs)
+
+SupplTable3 %>%
+  kbl() %>%
+  kable_styling()
+
+SupplTable3 %>% 
+  write.xlsx("../../output/DMRResults/Supplementary_table_S3_DMR.xlsx")
+
+```
+
+# Supplementary Table 4
+
+```{r}
+SupplTable4 <- CpG_DMR %>%
+  select(DMR, CpG, UCSC_RefGene_Accession, UCSC_RefGene_Group) %>%
+  left_join(DMP_PtCtrl$DMPresult %>% rownames_to_column("CpG") %>% 
+              mutate(more_methylated_in = case_when(sign(t)>0 ~ "Former patients", TRUE ~ "Healthy children")) %>%
+              select(CpG, more_methylated_in) %>% distinct(),
+            by="CpG") %>%
+  left_join(UCSC_ID2Name,
+            by=c("UCSC_RefGene_Accession")) %>% 
+  left_join(data.frame(IlluminaHumanMethylationEPICanno.ilm10b4.hg19::Other) %>%
+              rownames_to_column("CpG") %>%
+              select(CpG, Regulatory_Feature_Group) %>%
+              distinct(),
+            by="CpG") %>%
+  mutate(UCSC_RefGene_Group = case_when(UCSC_RefGene_Group %in% c("TSS1500", "TSS200")~"Promoter",
+                                              UCSC_RefGene_Group %in% c("5'UTR")~"5'UTR",
+                                              UCSC_RefGene_Group %in% c("1stExon")~"1st Exon",
+                                              UCSC_RefGene_Group %in% c("3'UTR")~"3'UTR",
+                                              UCSC_RefGene_Group %in% c("Body", "ExonBnd")~"Body",
+                                              TRUE ~ "Intergenic")) %>%
+  select(DMR, CpG, `Gene symbol`=UCSC_RefGene_Name, `Gene section`=UCSC_RefGene_Group, `more methylated in`=more_methylated_in) %>%
+  mutate(inGene = ifelse(`Gene symbol`=="",1,0),
+         DMR_number = as.integer(gsub("DMR", "", DMR))) %>%
+  arrange(DMR_number, inGene, `Gene symbol`, CpG,.by_group = T) %>%
+  select(-inGene, -DMR_number)
+
+SupplTable4 %>%
+  kbl() %>%
+  kable_styling()
+
+SupplTable4 %>% 
+  write.xlsx("../../output/DMPResults/Supplementary_table_S4_CpGInDMR.xlsx")
+```
+
+
+# Supplementary Table 5
+
+```{r}
+CpG_DMR_TidyLocation <- left_join(CpG_DMR, DMP_PtCtrl$DMPresult %>% rownames_to_column("CpG") %>% select(CpG, t), by="CpG") %>% select(DMR, CpG, UCSC_RefGene_Group, t) %>% distinct() %>%
+  mutate(CpGLocation_L2 = case_when(UCSC_RefGene_Group %in% c("TSS1500", "TSS200")~"Promoter",
+                                              UCSC_RefGene_Group %in% c("5'UTR")~"5'UTR",
+                                              UCSC_RefGene_Group %in% c("1stExon")~"1st Exon",
+                                              UCSC_RefGene_Group %in% c("3'UTR")~"3'UTR",
+                                              UCSC_RefGene_Group %in% c("Body", "ExonBnd")~"Body",
+                                              TRUE ~ NA_character_),
+         CpGLocation_L1 = ifelse(is.na(CpGLocation_L2), "Intergenic", "Within a gene"),
+         CpGLocation_L0 = "All locations",
+         HypomethylatedInPatients = ifelse(sign(t)<0, TRUE, FALSE)) %>%
+  gather("depth", "location", 5:7) %>%
+  filter(!is.na(location)) %>%
+  mutate(location=factor(location, levels = c("All locations", "Intergenic", "Within a gene", "Promoter", "5'UTR", "1st Exon", "Body", "3'UTR")))
+
+NumberOf_TotalDMR <- CpG_DMR_TidyLocation %>% select(DMR, location) %>% distinct() %>% filter(location=="All locations") %>% nrow()
+NumberOf_DMRInGene <- CpG_DMR_TidyLocation %>% select(DMR, location) %>% distinct() %>% filter(location=="Within a gene") %>% nrow()
+NumberOf_TotalCpGInDMR <- CpG_DMR_TidyLocation %>% select(CpG, location) %>% distinct() %>% filter(location=="All locations") %>% nrow()
+NumberOf_TotalCpGInDMRInGene <- CpG_DMR_TidyLocation %>% select(CpG, location) %>% distinct() %>% filter(location=="Within a gene") %>% nrow()
+
+CpG_DMR_SummaryLocation <- CpG_DMR_TidyLocation %>% select(DMR, location) %>% distinct() %>%
+  filter(location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+  dplyr::count(location, name = "N_DMRs_All") %>%
+  mutate(Denominator_DMR = NumberOf_TotalDMR,
+         P_DMRs_ALL = round(N_DMRs_All/Denominator_DMR*100,1)) %>%
+  bind_rows(CpG_DMR_TidyLocation %>% select(DMR, location) %>% distinct() %>%
+              filter(!location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+              dplyr::count(location, name = "N_DMRs_All") %>%
+              mutate(Denominator_DMR = NumberOf_DMRInGene,
+                     P_DMRs_ALL = round(N_DMRs_All/Denominator_DMR*100,1))) %>%
+  left_join(CpG_DMR_TidyLocation %>% select(CpG, location) %>% distinct() %>%
+              filter(location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+              dplyr::count(location, name = "N_CpGInDMRs_All") %>%
+              mutate(Denominator_CpGInDMR = NumberOf_TotalCpGInDMR,
+                     P_CpGInDMRs_ALL = round(N_CpGInDMRs_All/Denominator_CpGInDMR*100,1)) %>%
+              bind_rows(CpG_DMR_TidyLocation %>% select(CpG, location) %>% distinct() %>%
+                          filter(!location %in% c("All locations", "Intergenic", "Within a gene")) %>%
+                          dplyr::count(location, name = "N_CpGInDMRs_All") %>%
+                          mutate(Denominator_CpGInDMR = NumberOf_TotalCpGInDMRInGene,
+                                 P_CpGInDMRs_ALL = round(N_CpGInDMRs_All/Denominator_CpGInDMR*100,1))),
+            by="location"
+  ) %>%
+  left_join(CpG_DMR_TidyLocation %>% select(CpG, location, HypomethylatedInPatients) %>% distinct() %>%
+              filter(HypomethylatedInPatients) %>%
+              dplyr::count(location, name = "N_CpGInDMRs_HypoPt"), by="location" ) %>%
+  mutate(Denominator_HypoPt = N_CpGInDMRs_All,
+         P_DMRs_HypoPt = round(N_CpGInDMRs_HypoPt/N_CpGInDMRs_All*100,1))
+
+CpG_DMR_SummaryLocation_Formatted <- CpG_DMR_SummaryLocation %>%
+  transmute(`Location within the genome` = location,
+         `Number (%) of DMRs` = paste0(N_DMRs_All, "/", Denominator_DMR, " (", P_DMRs_ALL, "%)"),
+         `Number (%) of CpG sites in DMRs` = paste0(N_CpGInDMRs_All, "/", Denominator_CpGInDMR, " (", P_CpGInDMRs_ALL, "%)"),
+         `Number (%) of CpG sites in DMRs hypomethylated in former patients` = paste0(N_CpGInDMRs_HypoPt, "/", Denominator_HypoPt, " (", P_DMRs_HypoPt, "%)"))
+
+CpG_DMR_SummaryLocation_Formatted <- bind_rows(CpG_DMR_SummaryLocation_Formatted %>%
+                                                 filter(`Location within the genome` %in% c("All locations", "Intergenic", "Within a gene")),
+                                               CpG_DMR_SummaryLocation_Formatted %>%
+                                                 filter(!`Location within the genome` %in% c("All locations", "Intergenic", "Within a gene")) %>%
+                                                 dplyr::rename(`Number (%) of DMRs associated with a certain gene section`=`Number (%) of DMRs`,
+                                                               `Number (%) of CpG sites in DMRs within a gene section`=`Number (%) of CpG sites in DMRs`)
+) %>% 
+  select(`Location within the genome`,
+         `Number (%) of DMRs`, `Number (%) of DMRs associated with a certain gene section`, `Number (%) of CpG sites in DMRs`, 
+         `Number (%) of CpG sites in DMRs`, `Number (%) of CpG sites in DMRs within a gene section`, 
+         `Number (%) of CpG sites in DMRs hypomethylated in former patients`)
+
+CpG_DMR_SummaryLocation_Formatted %>% kbl() %>% kable_styling()
+CpG_DMR_SummaryLocation_Formatted %>% write.xlsx("../../output/DMRResults/Supplementary_table_S5_DMR_GeneLocations.xlsx")
+```
+
+# Supplementary table 6
+```{r}
+SupplTable6 <- KEGG_pathways_annotated %>%
+  mutate(classification = case_when(Neurocognitive_or_Growth=="Yes" ~ "physical and neurocognitive development",
+                                    ICU_stay=="Yes" ~ "the critical illness phase or the intensive medical care",
+                                    PreAdmission=="Yes" ~ "differences that may have been present before PICU admission",
+                                    TRUE ~ NA_character_)) %>%
+  filter(!is.na(classification)) %>%
+  select(`Biological category` = child_name, `KEGG pathway` = path, `Classification`=classification)
+
+SupplTable6 %>% kbl() %>% kable_styling()
+SupplTable6 %>% write.xlsx("../../output/PathwayResults/Supplementary_table_S6_ClassAnnotation.xlsx")
+```
+
+# Supplementary Table 7
+
+```{r}
+MostDiffPathways <- FuncAnn_stats_path %>% 
+  arrange(-wp_DMGenes) %>%
+  head(25) %>% 
+  pull(path)
+
+
+SupplTable7 <- KEGG_pathways_annotated %>% filter(path %in% MostDiffPathways) %>% group_by(child_name) %>% 
+  dplyr::rename('biological_category' = child_name) %>%
+  summarise(Neurocognitive_or_Growth = sum(Neurocognitive_or_Growth=="Yes", na.rm = T),
+            ICU_stay = sum(ICU_stay=="Yes", na.rm = T),
+            PreAdmission = sum(PreAdmission=="Yes", na.rm = T)) %>%
+  arrange(-(Neurocognitive_or_Growth+ICU_stay+PreAdmission), -Neurocognitive_or_Growth, -ICU_stay, -PreAdmission) %>%
+  select(`Biological category` = biological_category, 
+         `Physical and neurocognitive development` = Neurocognitive_or_Growth,
+         `The critical illness phase or the intensive medical care` = ICU_stay,
+         `Differences that may have been present before PICU admission` = PreAdmission)
+SupplTable7 %>% 
+  kbl() %>%
+  kable_styling()
+
+SupplTable7 %>% 
+  write.xlsx("../../output/PathwayResults/Supplementary_table_S7_FreqTable25.xlsx")
+```
+
+
