@@ -156,8 +156,8 @@ g_DMP_location_barPlot <- CpG_DMP_SummaryLocation %>%
   theme_linedraw() +
   theme(panel.grid.major.x = element_blank()) +
   xlab("Gene region") + ylab("Number of DMPs") +
-  scale_color_manual(name="Patients compared to \n healthy children", values = N_DMP_colorGeneric) +
-  scale_fill_manual(name="Patients compared to \n healthy children", values = N_DMP_fillGeneric)
+  scale_color_manual(name="Patients compared to \n healthy children", values = N_color) +
+  scale_fill_manual(name="Patients compared to \n healthy children", values = N_fill)
 g_DMP_location_barPlot
 ```
 
@@ -263,7 +263,7 @@ g_CpGInDMR_location_barPlot
 ```{r fig.height=7, fig.width=9}
 #install.packages("ggpubr")
 library(ggpubr)
-g_panel <- ggarrange(g_DMP_location_barPlotGeneric,
+g_panel <- ggarrange(g_DMP_location_barPlot,
           ggarrange(g_DMR_location_barPlot + ylab("Number of DMRs"),
                     g_CpGInDMR_location_barPlot + ylab("Number of CpG sites in DMRs") + theme(legend.position="none"),
                     ncol = 2, labels = c("B", "C")), 
